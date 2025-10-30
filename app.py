@@ -6,6 +6,13 @@ import os
 import zipfile
 import time
 from typing import List
+import hashlib
+from PIL import Image
+from io import BytesIO
+try:
+    from streamlit_cropper import st_cropper
+except Exception:
+    st_cropper = None
 
 st.set_page_config(
     page_title="Advanced Image Resizer",
@@ -23,6 +30,9 @@ if 'progress' not in st.session_state:
     st.session_state.progress = 0
 if 'resized_files' not in st.session_state:
     st.session_state.resized_files = []
+if 'cropped_images' not in st.session_state:
+    # Mapping: original filename -> PNG bytes of cropped image
+    st.session_state.cropped_images = {}
 
 # Sidebar for advanced settings
 st.sidebar.title("⚙️ Advanced Settings")
@@ -111,10 +121,56 @@ if uploaded_files or folder_uploaded:
     st.subheader("📋 Preview")
     
     if input_method == "Upload individual files" and uploaded_files:
-        cols = st.columns(min(4, len(uploaded_files)))
-        for i, file in enumerate(uploaded_files):
-            with cols[i % 4]:
-                st.image(file, caption=file.name, use_column_width=True)
+        if selected_mode == ResizeMode.CROP:
+            if st_cropper is None:
+                st.warning("Interactive cropping requires 'streamlit-cropper'. Please install dependencies and reload.")
+            else:
+                st.info("Drag the crop frame for each image. It follows the selected width × height ratio.")
+                
+                # Ensure non-zero aspect; default to 1:1 if invalid
+                ar_w = max(1, int(width))
+                ar_h = max(1, int(height))
+                
+                # Render all croppers in sequence (streamlit-cropper doesn't work well in tabs)
+                for i, file in enumerate(uploaded_files):
+                    st.markdown("---")
+                    st.markdown(f"### {i+1}. Adjust crop for: **{file.name}**")
+                    
+                    # Reset file pointer and load image fresh from bytes
+                    file.seek(0)
+                    img_bytes = file.read()
+                    img = Image.open(BytesIO(img_bytes)).convert("RGB")
+                    
+                    # Create two columns: cropper on left, preview on right
+                    col_crop, col_preview = st.columns([1, 1])
+                    
+                    with col_crop:
+                        cropped_img = st_cropper(
+                            img,
+                            aspect_ratio=(ar_w, ar_h),
+                            box_color='#FF6F61',
+                            realtime_update=True,
+                            return_type='image',
+                            key=f"cropper_{i}_{hashlib.md5(file.name.encode('utf-8')).hexdigest()}"
+                        )
+                    
+                    with col_preview:
+                        if isinstance(cropped_img, Image.Image):
+                            st.markdown("**Cropped Preview:**")
+                            prev = cropped_img.copy()
+                            st.image(prev, use_container_width=True)
+                            # Persist cropped image (as PNG) for processing
+                            buf = BytesIO()
+                            prev.save(buf, format='PNG')
+                            st.session_state.cropped_images[file.name] = buf.getvalue()
+                        else:
+                            # If the component returns a non-image (unexpected), clear stored crop
+                            st.session_state.cropped_images.pop(file.name, None)
+        else:
+            cols = st.columns(min(4, len(uploaded_files)))
+            for i, file in enumerate(uploaded_files):
+                with cols[i % 4]:
+                    st.image(file, caption=file.name, width='stretch')
     
     elif input_method == "Upload folder as ZIP" and folder_uploaded:
         st.info(f"📁 ZIP file uploaded: {uploaded_folder.name}")
@@ -150,8 +206,13 @@ if st.session_state.processing:
             image_paths = []
             for uploaded_file in uploaded_files:
                 temp_path = os.path.join(temp_dir, uploaded_file.name)
+                # Use cropped image bytes if in crop mode and available
+                if selected_mode == ResizeMode.CROP and uploaded_file.name in st.session_state.cropped_images:
+                    data_bytes = st.session_state.cropped_images[uploaded_file.name]
+                else:
+                    data_bytes = uploaded_file.getbuffer()
                 with open(temp_path, 'wb') as f:
-                    f.write(uploaded_file.getbuffer())
+                    f.write(data_bytes)
                 image_paths.append(temp_path)
 
             output_dir = "resized_images"
@@ -159,9 +220,18 @@ if st.session_state.processing:
             # Update progress
             status_text.text("🔄 Processing images...")
             
+            # If crop mode and all images have pre-cropped versions, resize to exact size
+            call_mode = selected_mode
+            call_preserve_aspect = preserve_aspect
+            if selected_mode == ResizeMode.CROP:
+                cropped_count = sum(1 for uf in uploaded_files if uf.name in st.session_state.cropped_images)
+                if cropped_count == len(uploaded_files) and len(uploaded_files) > 0:
+                    call_mode = ResizeMode.STRETCH
+                    call_preserve_aspect = False
+
             resized_files = resize_images(
                 image_paths, output_dir, width, height, quality, format_option,
-                selected_mode, preserve_aspect, preserve_metadata, naming_pattern,
+                call_mode, call_preserve_aspect, preserve_metadata, naming_pattern,
                 max_workers, progress_callback
             )
             

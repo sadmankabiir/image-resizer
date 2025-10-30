@@ -76,7 +76,8 @@ def calculate_dimensions(original_size: Tuple[int, int], target_size: Tuple[int,
 
 def resize_single_image(image_path: str, output_path: str, width: int, height: int, 
                        quality: int = 85, format: str = 'JPEG', mode: str = ResizeMode.FIT,
-                       preserve_aspect: bool = True, preserve_metadata: bool = False) -> bool:
+                       preserve_aspect: bool = True, preserve_metadata: bool = False,
+                       crop_box: Optional[Tuple[int, int, int, int]] = None) -> bool:
     """
     Resize a single image with advanced options.
     
@@ -103,11 +104,24 @@ def resize_single_image(image_path: str, output_path: str, width: int, height: i
                 background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
                 img = background
             
-            # Calculate dimensions
-            final_size = calculate_dimensions(original_size, (width, height), mode, preserve_aspect)
-            
+            # Apply explicit crop box if provided
+            if crop_box is not None:
+                try:
+                    # Ensure box is within image bounds
+                    l, t, r, b = crop_box
+                    l = max(0, min(l, img.width))
+                    t = max(0, min(t, img.height))
+                    r = max(l, min(r, img.width))
+                    b = max(t, min(b, img.height))
+                    img = img.crop((l, t, r, b))
+                except Exception as e:
+                    logger.warning(f"Invalid crop box {crop_box} for {image_path}: {e}")
+
+            # Calculate dimensions after optional crop
+            final_size = calculate_dimensions(img.size, (width, height), mode, preserve_aspect)
+
             # Resize based on mode
-            if mode == ResizeMode.CROP:
+            if mode == ResizeMode.CROP and crop_box is None:
                 # Crop to aspect ratio first, then resize
                 img = ImageOps.fit(img, final_size, Image.Resampling.LANCZOS)
             else:
@@ -143,7 +157,8 @@ def resize_images(image_files: List[str], output_dir: str, width: int, height: i
                   quality: int = 85, format: str = 'JPEG', mode: str = ResizeMode.FIT,
                   preserve_aspect: bool = True, preserve_metadata: bool = False,
                   naming_pattern: str = "{name}_resized", max_workers: int = None,
-                  progress_callback: Optional[Callable] = None) -> List[str]:
+                  progress_callback: Optional[Callable] = None,
+                  crop_boxes: Optional[dict] = None) -> List[str]:
     """
     Resize a list of images with advanced options and parallel processing.
 
@@ -189,9 +204,14 @@ def resize_images(image_files: List[str], output_dir: str, width: int, height: i
         
         output_path = os.path.join(output_dir, f"{output_name}.{format.lower()}")
         
+        # Map a crop box, if provided, either by full path or by base name
+        crop_box = None
+        if crop_boxes:
+            crop_box = crop_boxes.get(image_path) or crop_boxes.get(base_name)
+
         success = resize_single_image(
             image_path, output_path, width, height, quality, format,
-            mode, preserve_aspect, preserve_metadata
+            mode, preserve_aspect, preserve_metadata, crop_box
         )
         
         if success:
