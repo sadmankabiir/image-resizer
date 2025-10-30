@@ -145,31 +145,29 @@ if uploaded_files or folder_uploaded:
                     img_bytes = file.read()
                     img = Image.open(BytesIO(img_bytes)).convert("RGB")
                     
-                    # Create two columns: cropper on left, preview on right
-                    col_crop, col_preview = st.columns([1, 1])
+                    # Display cropper (full width for better responsiveness)
+                    cropped_img = st_cropper(
+                        img,
+                        aspect_ratio=(ar_w, ar_h),
+                        box_color='#FF6F61',
+                        realtime_update=True,
+                        return_type='image',
+                        key=f"cropper_{i}_{hashlib.md5(file.name.encode('utf-8')).hexdigest()}"
+                    )
                     
-                    with col_crop:
-                        cropped_img = st_cropper(
-                            img,
-                            aspect_ratio=(ar_w, ar_h),
-                            box_color='#FF6F61',
-                            realtime_update=True,
-                            return_type='image',
-                            key=f"cropper_{i}_{hashlib.md5(file.name.encode('utf-8')).hexdigest()}"
-                        )
-                    
-                    with col_preview:
-                        if isinstance(cropped_img, Image.Image):
-                            st.markdown("**Cropped Preview:**")
-                            prev = cropped_img.copy()
-                            st.image(prev, use_container_width=True)
-                            # Persist cropped image (as PNG) for processing
-                            buf = BytesIO()
-                            prev.save(buf, format='PNG')
-                            st.session_state.cropped_images[file.name] = buf.getvalue()
-                        else:
-                            # If the component returns a non-image (unexpected), clear stored crop
-                            st.session_state.cropped_images.pop(file.name, None)
+                    # Display preview below the cropper
+                    if isinstance(cropped_img, Image.Image):
+                        st.markdown("**Cropped Preview:**")
+                        prev = cropped_img.copy()
+                        # Display preview at a reasonable size (max 600px width)
+                        st.image(prev, width=600)
+                        # Persist cropped image (as PNG) for processing
+                        buf = BytesIO()
+                        prev.save(buf, format='PNG')
+                        st.session_state.cropped_images[file.name] = buf.getvalue()
+                    else:
+                        # If the component returns a non-image (unexpected), clear stored crop
+                        st.session_state.cropped_images.pop(file.name, None)
         else:
             cols = st.columns(min(4, len(uploaded_files)))
             for i, file in enumerate(uploaded_files):
