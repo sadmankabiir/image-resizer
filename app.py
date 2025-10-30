@@ -120,11 +120,6 @@ if uploaded_files or folder_uploaded:
         st.info(f"📁 ZIP file uploaded: {uploaded_folder.name}")
         # Could extract and show preview here if needed
 
-# Progress callback
-def progress_callback(current: int, total: int):
-    st.session_state.progress = current / total
-    st.rerun()
-
 # Process button
 if st.button("🚀 Resize Images", disabled=st.session_state.processing):
     if (input_method == "Upload individual files" and uploaded_files) or \
@@ -139,8 +134,16 @@ if st.button("🚀 Resize Images", disabled=st.session_state.processing):
 
 # Show progress bar
 if st.session_state.processing:
-    progress_bar = st.progress(0)
+    progress_bar = st.progress(st.session_state.progress)
     status_text = st.empty()
+
+    def progress_callback(current: int, total: int):
+        progress = (current / total) if total else 0.0
+        progress = max(0.0, min(progress, 1.0))
+        st.session_state.progress = progress
+        progress_bar.progress(progress)
+        status_text.text(f'🔄 Processing... {int(progress * 100)}%')
+
     
     if input_method == "Upload individual files" and uploaded_files:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -165,6 +168,7 @@ if st.session_state.processing:
             st.session_state.resized_files = resized_files
             st.session_state.processing = False
             st.session_state.progress = 1.0
+            progress_bar.progress(1.0)
             st.rerun()
     
     elif input_method == "Upload folder as ZIP" and folder_uploaded:
@@ -188,6 +192,7 @@ if st.session_state.processing:
             st.session_state.resized_files = resized_files
             st.session_state.processing = False
             st.session_state.progress = 1.0
+            progress_bar.progress(1.0)
             st.rerun()
 
 # Show results
@@ -235,12 +240,6 @@ if st.session_state.resized_files and not st.session_state.processing:
                     )
             except FileNotFoundError:
                 st.error(f"File not found: {os.path.basename(resized_file)}")
-
-# Show current progress
-if st.session_state.processing:
-    progress_bar.progress(st.session_state.progress)
-    if st.session_state.progress > 0:
-        status_text.text(f"🔄 Processing... {int(st.session_state.progress * 100)}%")
 
 # Footer
 st.markdown("---")
