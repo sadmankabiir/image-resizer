@@ -1,0 +1,5 @@
+/build
+/dist
+/resized_images
+/venv
+/__pycache__
