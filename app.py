@@ -29,10 +29,14 @@ if 'processing' not in st.session_state:
 if 'progress' not in st.session_state:
     st.session_state.progress = 0
 if 'resized_files' not in st.session_state:
+    # Store resized images in memory: list of (filename, bytes)
     st.session_state.resized_files = []
 if 'cropped_images' not in st.session_state:
     # Mapping: original filename -> PNG bytes of cropped image
     st.session_state.cropped_images = {}
+if 'temp_output_dir' not in st.session_state:
+    # Temporary directory for processing (persists across reruns)
+    st.session_state.temp_output_dir = None
 
 # Sidebar for advanced settings
 st.sidebar.title("⚙️ Advanced Settings")
@@ -202,90 +206,101 @@ if st.session_state.processing:
 
     
     if input_method == "Upload individual files" and uploaded_files:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            image_paths = []
-            for uploaded_file in uploaded_files:
-                temp_path = os.path.join(temp_dir, uploaded_file.name)
-                # Use cropped image bytes if in crop mode and available
-                if selected_mode == ResizeMode.CROP and uploaded_file.name in st.session_state.cropped_images:
-                    data_bytes = st.session_state.cropped_images[uploaded_file.name]
-                else:
-                    data_bytes = uploaded_file.getbuffer()
-                with open(temp_path, 'wb') as f:
-                    f.write(data_bytes)
-                image_paths.append(temp_path)
+        with tempfile.TemporaryDirectory() as temp_input_dir:
+            with tempfile.TemporaryDirectory() as temp_output_dir:
+                image_paths = []
+                for uploaded_file in uploaded_files:
+                    temp_path = os.path.join(temp_input_dir, uploaded_file.name)
+                    # Use cropped image bytes if in crop mode and available
+                    if selected_mode == ResizeMode.CROP and uploaded_file.name in st.session_state.cropped_images:
+                        data_bytes = st.session_state.cropped_images[uploaded_file.name]
+                    else:
+                        data_bytes = uploaded_file.getbuffer()
+                    with open(temp_path, 'wb') as f:
+                        f.write(data_bytes)
+                    image_paths.append(temp_path)
+                
+                # Update progress
+                status_text.text("🔄 Processing images...")
+                
+                # If crop mode and all images have pre-cropped versions, resize to exact size
+                call_mode = selected_mode
+                call_preserve_aspect = preserve_aspect
+                if selected_mode == ResizeMode.CROP:
+                    cropped_count = sum(1 for uf in uploaded_files if uf.name in st.session_state.cropped_images)
+                    if cropped_count == len(uploaded_files) and len(uploaded_files) > 0:
+                        call_mode = ResizeMode.STRETCH
+                        call_preserve_aspect = False
 
-            output_dir = "resized_images"
-            
-            # Update progress
-            status_text.text("🔄 Processing images...")
-            
-            # If crop mode and all images have pre-cropped versions, resize to exact size
-            call_mode = selected_mode
-            call_preserve_aspect = preserve_aspect
-            if selected_mode == ResizeMode.CROP:
-                cropped_count = sum(1 for uf in uploaded_files if uf.name in st.session_state.cropped_images)
-                if cropped_count == len(uploaded_files) and len(uploaded_files) > 0:
-                    call_mode = ResizeMode.STRETCH
-                    call_preserve_aspect = False
-
-            resized_files = resize_images(
-                image_paths, output_dir, width, height, quality, format_option,
-                call_mode, call_preserve_aspect, preserve_metadata, naming_pattern,
-                max_workers, progress_callback
-            )
-            
-            st.session_state.resized_files = resized_files
-            st.session_state.processing = False
-            st.session_state.progress = 1.0
-            progress_bar.progress(1.0)
-            st.rerun()
+                resized_file_paths = resize_images(
+                    image_paths, temp_output_dir, width, height, quality, format_option,
+                    call_mode, call_preserve_aspect, preserve_metadata, naming_pattern,
+                    max_workers, progress_callback
+                )
+                
+                # Load resized images into memory
+                st.session_state.resized_files = []
+                for file_path in resized_file_paths:
+                    with open(file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    filename = os.path.basename(file_path)
+                    st.session_state.resized_files.append((filename, file_bytes))
+                
+                st.session_state.processing = False
+                st.session_state.progress = 1.0
+                progress_bar.progress(1.0)
+                st.rerun()
     
     elif input_method == "Upload folder as ZIP" and folder_uploaded:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Extract ZIP file
-            status_text.text("📂 Extracting ZIP file...")
-            with zipfile.ZipFile(uploaded_folder, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            
-            output_dir = "resized_images"
-            
-            # Update progress
-            status_text.text("🔄 Processing images...")
-            
-            resized_files = resize_folder(
-                temp_dir, output_dir, width, height, quality, format_option,
-                selected_mode, preserve_aspect, preserve_metadata, naming_pattern,
-                max_workers, progress_callback
-            )
-            
-            st.session_state.resized_files = resized_files
-            st.session_state.processing = False
-            st.session_state.progress = 1.0
-            progress_bar.progress(1.0)
-            st.rerun()
+        with tempfile.TemporaryDirectory() as temp_input_dir:
+            with tempfile.TemporaryDirectory() as temp_output_dir:
+                # Extract ZIP file
+                status_text.text("📂 Extracting ZIP file...")
+                with zipfile.ZipFile(uploaded_folder, 'r') as zip_ref:
+                    zip_ref.extractall(temp_input_dir)
+                
+                # Update progress
+                status_text.text("🔄 Processing images...")
+                
+                resized_file_paths = resize_folder(
+                    temp_input_dir, temp_output_dir, width, height, quality, format_option,
+                    selected_mode, preserve_aspect, preserve_metadata, naming_pattern,
+                    max_workers, progress_callback
+                )
+                
+                # Load resized images into memory
+                st.session_state.resized_files = []
+                for file_path in resized_file_paths:
+                    with open(file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    filename = os.path.basename(file_path)
+                    st.session_state.resized_files.append((filename, file_bytes))
+                
+                st.session_state.processing = False
+                st.session_state.progress = 1.0
+                progress_bar.progress(1.0)
+                st.rerun()
 
 # Show results
 if st.session_state.resized_files and not st.session_state.processing:
     st.success(f"✅ Successfully resized {len(st.session_state.resized_files)} images!")
     
-    # Create ZIP for all files
-    output_dir = "resized_images"
-    zip_path = os.path.join(output_dir, "all_resized_images.zip")
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for resized_file in st.session_state.resized_files:
-            zipf.write(resized_file, os.path.basename(resized_file))
+    # Create ZIP in memory for all files
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for filename, file_bytes in st.session_state.resized_files:
+            zipf.writestr(filename, file_bytes)
+    zip_buffer.seek(0)
 
     # Download all as ZIP button
     col1, col2 = st.columns([1, 1])
     with col1:
-        with open(zip_path, 'rb') as f:
-            st.download_button(
-                label="📦 Download All as ZIP",
-                data=f,
-                file_name="resized_images.zip",
-                mime="application/zip"
-            )
+        st.download_button(
+            label="📦 Download All as ZIP",
+            data=zip_buffer.getvalue(),
+            file_name="resized_images.zip",
+            mime="application/zip"
+        )
     
     with col2:
         if st.button("🗑️ Clear Results"):
@@ -298,18 +313,15 @@ if st.session_state.resized_files and not st.session_state.processing:
     
     # Provide individual download links in a grid
     cols = st.columns(3)
-    for i, resized_file in enumerate(st.session_state.resized_files):
+    for i, (filename, file_bytes) in enumerate(st.session_state.resized_files):
         with cols[i % 3]:
-            try:
-                with open(resized_file, 'rb') as f:
-                    st.download_button(
-                        label=f"📥 {os.path.basename(resized_file)}",
-                        data=f,
-                        file_name=os.path.basename(resized_file),
-                        mime="image/*"
-                    )
-            except FileNotFoundError:
-                st.error(f"File not found: {os.path.basename(resized_file)}")
+            st.download_button(
+                label=f"📥 {filename}",
+                data=file_bytes,
+                file_name=filename,
+                mime="image/*",
+                key=f"download_{i}_{filename}"
+            )
 
 # Footer
 st.markdown("---")
