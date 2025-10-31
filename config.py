@@ -15,6 +15,7 @@ DEFAULT_CONFIG = {
         'mode': 'fit',
         'preserve_aspect': True,
         'preserve_metadata': False,
+        'lossless': False,
         'max_workers': None,  # Auto-detect
         'naming_pattern': '{name}_resized'
     },
@@ -27,6 +28,28 @@ DEFAULT_CONFIG = {
     'paths': {
         'output_dir': 'resized_images',
         'temp_dir': None  # Use system default
+    }
+}
+
+# Format compression settings
+FORMAT_SETTINGS = {
+    'JPEG': {
+        'name': 'JPEG',
+        'supports_lossless': False,
+        'supports_transparency': False,
+        'description': 'Lossy compression, best for photos'
+    },
+    'PNG': {
+        'name': 'PNG',
+        'supports_lossless': True,
+        'supports_transparency': True,
+        'description': 'Lossless compression, preserves transparency'
+    },
+    'WEBP': {
+        'name': 'WebP',
+        'supports_lossless': True,
+        'supports_transparency': True,
+        'description': 'Modern format with lossy or lossless compression'
     }
 }
 
@@ -81,3 +104,15 @@ def get_resize_mode_info(mode: str) -> Dict[str, str]:
 def get_all_resize_modes() -> Dict[str, Dict[str, str]]:
     """Get all available resize modes."""
     return RESIZE_MODES.copy()
+
+def get_format_settings(format: str) -> Dict[str, Any]:
+    """Get settings for a specific output format."""
+    return FORMAT_SETTINGS.get(format.upper(), FORMAT_SETTINGS['JPEG'])
+
+def supports_lossless(format: str) -> bool:
+    """Check if a format supports lossless compression."""
+    return get_format_settings(format).get('supports_lossless', False)
+
+def get_all_formats() -> Dict[str, Dict[str, Any]]:
+    """Get all available output formats."""
+    return FORMAT_SETTINGS.copy()

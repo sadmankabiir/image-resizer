@@ -1,10 +1,9 @@
 import streamlit as st
 from image_resizer import resize_images, resize_folder, ResizeMode, get_image_info
-from config import get_config, get_resize_mode_info, get_all_resize_modes, NAMING_PATTERNS
+from config import get_config, get_resize_mode_info, get_all_resize_modes, NAMING_PATTERNS, supports_lossless
 import tempfile
 import os
 import zipfile
-import time
 from typing import List
 import hashlib
 from PIL import Image
@@ -89,6 +88,19 @@ with col2:
                                  help="Maintain the original aspect ratio")
     preserve_metadata = st.checkbox("Preserve Metadata", value=False,
                                   help="Keep EXIF data and other metadata")
+    
+    lossless_enabled = supports_lossless(format_option)
+    lossless = st.checkbox(
+        "Lossless Compression",
+        value=False,
+        disabled=not lossless_enabled,
+        help=f"Use lossless compression (PNG and WEBP only)" if lossless_enabled else "This format doesn't support lossless compression"
+    )
+    
+    if format_option == 'JPEG':
+        st.info("ℹ️ JPEG always uses lossy compression for better file size.")
+    elif lossless and lossless_enabled:
+        st.info(f"ℹ️ {format_option} will be saved with lossless compression.")
 
 # Advanced settings in sidebar
 st.sidebar.subheader("🔧 Advanced Options")
@@ -233,7 +245,7 @@ if st.session_state.processing:
                 resized_file_paths = resize_images(
                     image_paths, temp_output_dir, width, height, quality, format_option,
                     call_mode, call_preserve_aspect, preserve_metadata, naming_pattern,
-                    max_workers, progress_callback
+                    max_workers, progress_callback, None, lossless
                 )
                 
                 # Load resized images into memory
@@ -254,8 +266,14 @@ if st.session_state.processing:
             with tempfile.TemporaryDirectory() as temp_output_dir:
                 # Extract ZIP file
                 status_text.text("📂 Extracting ZIP file...")
-                with zipfile.ZipFile(uploaded_folder, 'r') as zip_ref:
-                    zip_ref.extractall(temp_input_dir)
+                try:
+                    uploaded_folder.seek(0)
+                    with zipfile.ZipFile(uploaded_folder, 'r') as zip_ref:
+                        zip_ref.extractall(temp_input_dir)
+                except zipfile.BadZipFile as e:
+                    st.error(f"Invalid ZIP file: {e}")
+                    st.session_state.processing = False
+                    st.rerun()
                 
                 # Update progress
                 status_text.text("🔄 Processing images...")
@@ -263,7 +281,7 @@ if st.session_state.processing:
                 resized_file_paths = resize_folder(
                     temp_input_dir, temp_output_dir, width, height, quality, format_option,
                     selected_mode, preserve_aspect, preserve_metadata, naming_pattern,
-                    max_workers, progress_callback
+                    max_workers, progress_callback, lossless
                 )
                 
                 # Load resized images into memory

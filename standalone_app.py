@@ -134,18 +134,23 @@ class ImageResizerGUI:
             filetypes=[("ZIP files", "*.zip")]
         )
         if zip_file:
-            # Extract ZIP to temp directory
-            with tempfile.TemporaryDirectory() as temp_dir:
-                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
-                
-                # Find all image files
-                for root, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.gif')):
-                            self.input_files.append(os.path.join(root, file))
-                
-                self.update_files_list()
+            try:
+                # Extract ZIP to temp directory
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                        zip_ref.extractall(temp_dir)
+                    
+                    # Find all image files
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.gif')):
+                                self.input_files.append(os.path.join(root, file))
+                    
+                    self.update_files_list()
+            except zipfile.BadZipFile:
+                messagebox.showerror("Error", "Invalid ZIP file. Please select a valid ZIP file.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to extract ZIP file: {e}")
                 
     def clear_files(self):
         self.input_files.clear()
@@ -216,7 +221,20 @@ class ImageResizerGUI:
         self.processing = False
         self.process_button.config(state='normal')
         self.status_label.config(text=f"Complete! Resized {count} images.")
-        messagebox.showinfo("Success", f"Successfully resized {count} images!")
+        result = messagebox.showinfo("Success", f"Successfully resized {count} images!\n\nOpen output folder?")
+        if result == 'ok':
+            self._open_output_folder()
+    
+    def _open_output_folder(self):
+        try:
+            if os.name == 'nt':
+                os.startfile(self.output_dir)
+            elif os.name == 'posix':
+                os.system(f'open "{self.output_dir}"')
+            else:
+                os.system(f'xdg-open "{self.output_dir}"')
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open folder: {e}")
         
     def _processing_error(self, error_msg):
         self.processing = False

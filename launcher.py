@@ -11,15 +11,13 @@ import time
 from pathlib import Path
 
 def main():
-    # Get the directory where the executable is located
+    # Get the directory where the script/executable is located
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
         base_path = Path(sys._MEIPASS)
-        app_dir = Path(sys.executable).parent
     else:
         # Running as script
         base_path = Path(__file__).parent
-        app_dir = base_path
     
     # Set environment variables to help Streamlit find its components
     os.environ['STREAMLIT_SERVER_HEADLESS'] = 'true'
@@ -39,7 +37,7 @@ def main():
             return 1
         
         print("Starting Image Resizer...")
-        print("This will open in your web browser.")
+        print("This will open in your web browser at http://localhost:8501")
         print("Close this window to stop the application.")
         print("-" * 50)
         
@@ -54,14 +52,29 @@ def main():
                 '--browser.gatherUsageStats', 'false'
             ]
             
-            # Give Streamlit a moment to start
-            time.sleep(2)
+            # Run Streamlit in subprocess with output capture
+            proc = subprocess.Popen(cmd, cwd=base_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            # Wait for server to be ready (check for successful start message)
+            import time
+            max_retries = 30
+            for attempt in range(max_retries):
+                try:
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    result = sock.connect_ex(('localhost', 8501))
+                    sock.close()
+                    if result == 0:
+                        break
+                except:
+                    pass
+                time.sleep(0.5)
             
             # Open browser
             webbrowser.open('http://localhost:8501')
             
-            # Run Streamlit
-            result = subprocess.run(cmd, cwd=base_path)
+            # Wait for process to complete
+            proc.wait()
             
         except KeyboardInterrupt:
             print("\nShutting down...")

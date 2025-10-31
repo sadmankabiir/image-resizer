@@ -3,7 +3,6 @@ import os
 import concurrent.futures
 from typing import List, Tuple, Optional, Callable
 import logging
-from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -65,19 +64,14 @@ def calculate_dimensions(original_size: Tuple[int, int], target_size: Tuple[int,
             return target_w, int(target_w / orig_ratio)
     
     elif mode == ResizeMode.CROP:
-        if orig_ratio > target_ratio:
-            crop_h = int(orig_w / target_ratio)
-            return target_w, target_h
-        else:
-            crop_w = int(orig_h * target_ratio)
-            return target_w, target_h
+        return target_w, target_h
     
     return target_w, target_h
 
 def resize_single_image(image_path: str, output_path: str, width: int, height: int, 
                        quality: int = 85, format: str = 'JPEG', mode: str = ResizeMode.FIT,
                        preserve_aspect: bool = True, preserve_metadata: bool = False,
-                       crop_box: Optional[Tuple[int, int, int, int]] = None) -> bool:
+                       crop_box: Optional[Tuple[int, int, int, int]] = None, lossless: bool = False) -> bool:
     """
     Resize a single image with advanced options.
     
@@ -85,11 +79,13 @@ def resize_single_image(image_path: str, output_path: str, width: int, height: i
     :param output_path: Path to save resized image
     :param width: Target width
     :param height: Target height
-    :param quality: JPEG quality (0-100)
+    :param quality: JPEG quality (0-100) or WEBP quality if not lossless
     :param format: Output format
     :param mode: Resize mode
     :param preserve_aspect: Whether to preserve aspect ratio
     :param preserve_metadata: Whether to preserve EXIF metadata
+    :param crop_box: Optional crop coordinates (left, top, right, bottom)
+    :param lossless: Whether to use lossless compression (PNG and WEBP only)
     :return: Success status
     """
     try:
@@ -121,9 +117,9 @@ def resize_single_image(image_path: str, output_path: str, width: int, height: i
             final_size = calculate_dimensions(img.size, (width, height), mode, preserve_aspect)
 
             # Resize based on mode
-            if mode == ResizeMode.CROP and crop_box is None:
-                # Crop to aspect ratio first, then resize
-                img = ImageOps.fit(img, final_size, Image.Resampling.LANCZOS)
+            if mode == ResizeMode.CROP:
+                # Crop to exact aspect ratio first, then resize
+                img = ImageOps.fit(img, (width, height), Image.Resampling.LANCZOS)
             else:
                 img = img.resize(final_size, Image.Resampling.LANCZOS)
             
@@ -135,8 +131,11 @@ def resize_single_image(image_path: str, output_path: str, width: int, height: i
             elif format.upper() == 'PNG':
                 save_kwargs['optimize'] = True
             elif format.upper() == 'WEBP':
-                save_kwargs['quality'] = quality
-                save_kwargs['optimize'] = True
+                if lossless:
+                    save_kwargs['lossless'] = True
+                else:
+                    save_kwargs['quality'] = quality
+                save_kwargs['method'] = 6
             
             # Preserve metadata if requested
             if preserve_metadata and hasattr(img, 'info'):
@@ -149,7 +148,7 @@ def resize_single_image(image_path: str, output_path: str, width: int, height: i
             logger.info(f"Successfully resized {image_path} to {final_size}")
             return True
             
-    except Exception as e:
+    except (OSError, IOError, ValueError) as e:
         logger.error(f"Error resizing {image_path}: {e}")
         return False
 
@@ -158,7 +157,7 @@ def resize_images(image_files: List[str], output_dir: str, width: int, height: i
                   preserve_aspect: bool = True, preserve_metadata: bool = False,
                   naming_pattern: str = "{name}_resized", max_workers: int = None,
                   progress_callback: Optional[Callable] = None,
-                  crop_boxes: Optional[dict] = None) -> List[str]:
+                  crop_boxes: Optional[dict] = None, lossless: bool = False) -> List[str]:
     """
     Resize a list of images with advanced options and parallel processing.
 
@@ -166,7 +165,7 @@ def resize_images(image_files: List[str], output_dir: str, width: int, height: i
     :param output_dir: Directory to save resized images
     :param width: Target width
     :param height: Target height
-    :param quality: JPEG quality (0-100)
+    :param quality: JPEG quality (0-100) or WEBP quality if not lossless
     :param format: Output format ('JPEG', 'PNG', 'WEBP')
     :param mode: Resize mode (fit, fill, crop, stretch)
     :param preserve_aspect: Whether to preserve aspect ratio
@@ -174,6 +173,8 @@ def resize_images(image_files: List[str], output_dir: str, width: int, height: i
     :param naming_pattern: Naming pattern for output files
     :param max_workers: Maximum number of worker threads
     :param progress_callback: Optional callback for progress updates
+    :param crop_boxes: Optional dict mapping image paths/names to crop coordinates
+    :param lossless: Whether to use lossless compression (PNG and WEBP only)
     :return: List of successfully resized file paths
     """
     if not os.path.exists(output_dir):
@@ -211,7 +212,7 @@ def resize_images(image_files: List[str], output_dir: str, width: int, height: i
 
         success = resize_single_image(
             image_path, output_path, width, height, quality, format,
-            mode, preserve_aspect, preserve_metadata, crop_box
+            mode, preserve_aspect, preserve_metadata, crop_box, lossless
         )
         
         if success:
@@ -238,7 +239,7 @@ def resize_folder(folder_path: str, output_dir: str, width: int, height: int,
                   quality: int = 85, format: str = 'JPEG', mode: str = ResizeMode.FIT,
                   preserve_aspect: bool = True, preserve_metadata: bool = False,
                   naming_pattern: str = "{name}_resized", max_workers: int = None,
-                  progress_callback: Optional[Callable] = None) -> List[str]:
+                  progress_callback: Optional[Callable] = None, lossless: bool = False) -> List[str]:
     """
     Resize all images in a folder with advanced options.
 
@@ -246,7 +247,7 @@ def resize_folder(folder_path: str, output_dir: str, width: int, height: int,
     :param output_dir: Directory to save resized images
     :param width: Target width
     :param height: Target height
-    :param quality: JPEG quality (0-100)
+    :param quality: JPEG quality (0-100) or WEBP quality if not lossless
     :param format: Output format ('JPEG', 'PNG', 'WEBP')
     :param mode: Resize mode (fit, fill, crop, stretch)
     :param preserve_aspect: Whether to preserve aspect ratio
@@ -254,12 +255,13 @@ def resize_folder(folder_path: str, output_dir: str, width: int, height: int,
     :param naming_pattern: Naming pattern for output files
     :param max_workers: Maximum number of worker threads
     :param progress_callback: Optional callback for progress updates
+    :param lossless: Whether to use lossless compression (PNG and WEBP only)
     :return: List of successfully resized file paths
     """
     image_files = get_image_files_from_folder(folder_path)
     return resize_images(
         image_files, output_dir, width, height, quality, format, mode,
-        preserve_aspect, preserve_metadata, naming_pattern, max_workers, progress_callback
+        preserve_aspect, preserve_metadata, naming_pattern, max_workers, progress_callback, None, lossless
     )
 
 def get_image_info(image_path: str) -> dict:
